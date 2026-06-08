@@ -8,8 +8,7 @@ import (
 )
 
 func TestLoadAllIncludesBuiltinThemes(t *testing.T) {
-	// Point HOME somewhere empty so only embedded themes load.
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLIAMP_CONFIG_DIR", filepath.Join(t.TempDir(), "empty"))
 
 	themes := LoadAll()
 	if len(themes) == 0 {
@@ -33,7 +32,7 @@ func TestLoadAllIncludesBuiltinThemes(t *testing.T) {
 }
 
 func TestLoadAllSortedCaseInsensitive(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLIAMP_CONFIG_DIR", filepath.Join(t.TempDir(), "empty"))
 
 	themes := LoadAll()
 	for i := 1; i < len(themes); i++ {
@@ -45,147 +44,116 @@ func TestLoadAllSortedCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestLoadAllPartialUserOverrideMergesOntoBuiltin(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	userDir := filepath.Join(home, ".config", "cliamp", "themes")
-	if err := os.MkdirAll(userDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
+func TestLoadAllUserThemeScenarios(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileName string
+		fileBody string
+		check    func(t *testing.T, themes []Theme)
+	}{
+		{
+			name:     "partial merge onto builtin",
+			fileName: "dracula.toml",
+			fileBody: "accent = \"#ff00ff\"\nfg = \"#123456\"\n",
+			check: func(t *testing.T, themes []Theme) {
+				var got Theme
+				for _, th := range themes {
+					if strings.EqualFold(th.Name, "dracula") {
+						got = th
+						break
+					}
+				}
+				if got.Name == "" {
+					t.Fatal("dracula theme not present after merge")
+				}
+				if got.Accent != "#ff00ff" {
+					t.Errorf("Accent = %q, want #ff00ff", got.Accent)
+				}
+				if got.FG != "#123456" {
+					t.Errorf("FG = %q, want #123456", got.FG)
+				}
+				if got.BrightFG != "#f8f8f2" {
+					t.Errorf("built-in BrightFG should survive: got %q, want #f8f8f2", got.BrightFG)
+				}
+			},
+		},
+		{
+			name:     "full standalone theme accepted",
+			fileName: "mytheme.toml",
+			fileBody: "accent = \"#abcdef\"\nbright_fg = \"#ffffff\"\nfg = \"#cccccc\"\ngreen = \"#00ff00\"\nyellow = \"#ffff00\"\nred = \"#ff0000\"",
+			check: func(t *testing.T, themes []Theme) {
+				var found bool
+				for _, th := range themes {
+					if th.Name == "mytheme" {
+						found = true
+						if th.Accent != "#abcdef" {
+							t.Errorf("Accent = %q, want #abcdef", th.Accent)
+						}
+					}
+				}
+				if !found {
+					t.Error("user theme mytheme not loaded")
+				}
+			},
+		},
+		{
+			name:     "partial without builtin match skipped",
+			fileName: "broken.toml",
+			fileBody: "accent = \"#ff0000\"",
+			check: func(t *testing.T, themes []Theme) {
+				for _, th := range themes {
+					if th.Name == "broken" {
+						t.Fatal("partial theme without built-in match should not be loaded")
+					}
+				}
+			},
+		},
+		{
+			name:     "invalid hex in merge ignored",
+			fileName: "dracula.toml",
+			fileBody: "accent = \"#ff0000\"\nbright_fg = \"#f8f8f2\"\nfg = \"#6272a4\"\ngreen = \"#50fa7b\"\nyellow = \"#f1fa8c\"\nred = \"not-a-color\"",
+			check: func(t *testing.T, themes []Theme) {
+				var got Theme
+				for _, th := range themes {
+					if strings.EqualFold(th.Name, "dracula") {
+						got = th
+						break
+					}
+				}
+				if got.Name == "" {
+					t.Fatal("dracula theme not found after merge")
+				}
+				if got.Accent != "#ff0000" {
+					t.Errorf("valid Accent should merge: got %q, want #ff0000", got.Accent)
+				}
+				if got.Red != "#ff5555" {
+					t.Errorf("invalid Red should be ignored (built-in): got %q, want #ff5555", got.Red)
+				}
+			},
+		},
 	}
 
-	// Only two fields — should MERGE onto the built-in dracula.
-	partial := `accent = "#ff00ff"
-fg = "#123456"
-`
-	if err := os.WriteFile(filepath.Join(userDir, "dracula.toml"), []byte(partial), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	themes := LoadAll()
-	var got Theme
-	for _, th := range themes {
-		if strings.EqualFold(th.Name, "dracula") {
-			got = th
-			break
-		}
-	}
-	if got.Name == "" {
-		t.Fatal("dracula theme not present after merge")
-	}
-	// User fields take effect.
-	if got.Accent != "#ff00ff" {
-		t.Errorf("Accent = %q, want #ff00ff", got.Accent)
-	}
-	if got.FG != "#123456" {
-		t.Errorf("FG = %q, want #123456", got.FG)
-	}
-	// Built-in dracula has bright_fg "#f8f8f2" — must survive merge.
-	if got.BrightFG != "#f8f8f2" {
-		t.Errorf("built-in BrightFG should survive merge: got %q, want #f8f8f2", got.BrightFG)
-	}
-}
-
-func TestLoadAllAddsUserOnlyTheme(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	userDir := filepath.Join(home, ".config", "cliamp", "themes")
-	if err := os.MkdirAll(userDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	// New theme (no built-in match): all six hex fields required.
-	custom := `accent = "#abcdef"
-bright_fg = "#ffffff"
-fg = "#cccccc"
-green = "#00ff00"
-yellow = "#ffff00"
-red = "#ff0000"`
-	if err := os.WriteFile(filepath.Join(userDir, "mytheme.toml"), []byte(custom), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	themes := LoadAll()
-	var found bool
-	for _, th := range themes {
-		if th.Name == "mytheme" {
-			found = true
-			if th.Accent != "#abcdef" {
-				t.Errorf("Accent = %q, want #abcdef", th.Accent)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configDir := filepath.Join(t.TempDir(), ".config", "cliamp")
+			t.Setenv("CLIAMP_CONFIG_DIR", configDir)
+			userDir := filepath.Join(configDir, "themes")
+			if err := os.MkdirAll(userDir, 0o755); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
 			}
-		}
-	}
-	if !found {
-		t.Error("user theme mytheme not loaded")
-	}
-}
+			if err := os.WriteFile(filepath.Join(userDir, tt.fileName), []byte(tt.fileBody), 0o644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
 
-func TestLoadAllSkipsPartialThemeWithoutBuiltinMatch(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	userDir := filepath.Join(home, ".config", "cliamp", "themes")
-	if err := os.MkdirAll(userDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	// Only accent set, no built-in "broken" exists — should be rejected.
-	partial := `accent = "#ff0000"`
-	if err := os.WriteFile(filepath.Join(userDir, "broken.toml"), []byte(partial), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	themes := LoadAll()
-	for _, th := range themes {
-		if th.Name == "broken" {
-			t.Fatal("partial theme without built-in match should not be loaded")
-		}
-	}
-}
-
-func TestLoadAllSkipsInvalidHexInMerge(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	userDir := filepath.Join(home, ".config", "cliamp", "themes")
-	if err := os.MkdirAll(userDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	// All six fields present but red is invalid hex — valid fields merge,
-	// invalid field is ignored (built-in value survives).
-	bad := `accent = "#ff0000"
-bright_fg = "#f8f8f2"
-fg = "#6272a4"
-green = "#50fa7b"
-yellow = "#f1fa8c"
-red = "not-a-color"`
-	if err := os.WriteFile(filepath.Join(userDir, "dracula.toml"), []byte(bad), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	themes := LoadAll()
-	var got Theme
-	for _, th := range themes {
-		if strings.EqualFold(th.Name, "dracula") {
-			got = th
-			break
-		}
-	}
-	if got.Name == "" {
-		t.Fatal("dracula theme not found after merge")
-	}
-	if got.Accent != "#ff0000" {
-		t.Errorf("valid Accent should merge: got %q, want #ff0000", got.Accent)
-	}
-	if got.Red != "#ff5555" {
-		t.Errorf("invalid Red should be ignored (built-in): got %q, want #ff5555", got.Red)
+			tt.check(t, LoadAll())
+		})
 	}
 }
 
 func TestLoadAllIgnoresNonTomlFiles(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	userDir := filepath.Join(home, ".config", "cliamp", "themes")
+	configDir := filepath.Join(t.TempDir(), ".config", "cliamp")
+	t.Setenv("CLIAMP_CONFIG_DIR", configDir)
+	userDir := filepath.Join(configDir, "themes")
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -206,8 +174,7 @@ func TestLoadAllIgnoresNonTomlFiles(t *testing.T) {
 }
 
 func TestLoadAllMissingUserDir(t *testing.T) {
-	// HOME points at a dir where ~/.config/cliamp/themes doesn't exist.
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLIAMP_CONFIG_DIR", filepath.Join(t.TempDir(), "empty"))
 	themes := LoadAll()
 	if len(themes) == 0 {
 		t.Error("LoadAll() with missing user dir should still return built-in themes")
