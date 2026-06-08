@@ -123,3 +123,110 @@ func TestParsedThemeNotDefault(t *testing.T) {
 		t.Error("theme with accent should not be IsDefault()")
 	}
 }
+
+func TestValidHex(t *testing.T) {
+	tests := []struct {
+		s    string
+		want bool
+	}{
+		{"#fff", true},
+		{"#FFf", true},
+		{"#aabbcc", true},
+		{"#AABBCC", true},
+		{"#aabbccdd", true},
+		{"", false},
+		{"aabbcc", false},
+		{"#xyz", false},
+		{"#12", false},
+		{"#1234567", false},
+		{"#gggggg", false},
+	}
+	for _, tt := range tests {
+		got := validHex(tt.s)
+		if got != tt.want {
+			t.Errorf("validHex(%q) = %v, want %v", tt.s, got, tt.want)
+		}
+	}
+}
+
+func TestValidate(t *testing.T) {
+	valid := Theme{"test", "#bd93f9", "#f8f8f2", "#6272a4", "#50fa7b", "#f1fa8c", "#ff5555"}
+	if err := valid.Validate(); err != nil {
+		t.Errorf("valid theme should pass: %v", err)
+	}
+
+	partial := Theme{"partial", "#ff0000", "", "", "", "", ""}
+	if err := partial.Validate(); err == nil {
+		t.Error("partial theme should fail validation")
+	}
+
+	empty := Theme{"empty", "", "", "", "", "", ""}
+	if err := empty.Validate(); err == nil {
+		t.Error("empty theme should fail validation")
+	}
+
+	badHex := Theme{"bad", "#ff0000", "#f8f8f2", "#6272a4", "#50fa7b", "#f1fa8c", "not-a-color"}
+	if err := badHex.Validate(); err == nil {
+		t.Error("theme with invalid hex should fail validation")
+	}
+}
+
+func TestValidateErrorContainsFieldNames(t *testing.T) {
+	th := Theme{"broken", "#ff0000", "", "", "", "", ""}
+	err := th.Validate()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	for _, field := range []string{"bright_fg", "fg", "green", "yellow", "red"} {
+		if !strings.Contains(msg, field) {
+			t.Errorf("error %q should mention %q", msg, field)
+		}
+	}
+}
+
+func TestMerge(t *testing.T) {
+	builtin := Theme{"dracula", "#bd93f9", "#f8f8f2", "#6272a4", "#50fa7b", "#f1fa8c", "#ff5555"}
+
+	// Partial override: only accent and a new fg.
+	partial := Theme{"dracula", "#ff00ff", "", "#123456", "", "", ""}
+
+	dst := builtin
+	merge(&dst, partial)
+
+	if dst.Accent != "#ff00ff" {
+		t.Errorf("Accent = %q, want #ff00ff", dst.Accent)
+	}
+	if dst.FG != "#123456" {
+		t.Errorf("FG = %q, want #123456", dst.FG)
+	}
+	if dst.BrightFG != "#f8f8f2" {
+		t.Errorf("BrightFG should survive merge: got %q", dst.BrightFG)
+	}
+	if dst.Green != "#50fa7b" {
+		t.Errorf("Green should survive merge: got %q", dst.Green)
+	}
+	if dst.Yellow != "#f1fa8c" {
+		t.Errorf("Yellow should survive merge: got %q", dst.Yellow)
+	}
+	if dst.Red != "#ff5555" {
+		t.Errorf("Red should survive merge: got %q", dst.Red)
+	}
+}
+
+func TestMergeIgnoresInvalidHex(t *testing.T) {
+	builtin := Theme{"dracula", "#bd93f9", "#f8f8f2", "#6272a4", "#50fa7b", "#f1fa8c", "#ff5555"}
+
+	// User file has valid accent + invalid red.
+	user := Theme{"dracula", "#aa0000", "", "", "", "", "not-a-color"}
+
+	dst := builtin
+	merge(&dst, user)
+
+	if dst.Accent != "#aa0000" {
+		t.Errorf("valid Accent should merge: got %q", dst.Accent)
+	}
+	if dst.Red != "#ff5555" {
+		t.Errorf("invalid Red should be ignored (built-in): got %q, want #ff5555", dst.Red)
+	}
+}

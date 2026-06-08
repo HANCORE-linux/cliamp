@@ -45,19 +45,20 @@ func TestLoadAllSortedCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestLoadAllUserThemeOverridesBuiltin(t *testing.T) {
+func TestLoadAllPartialUserOverrideMergesOntoBuiltin(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// Put a user override file named "dracula.toml" with a distinctive accent color.
 	userDir := filepath.Join(home, ".config", "cliamp", "themes")
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	overridden := `accent = "#ff00ff"
+
+	// Only two fields — should MERGE onto the built-in dracula.
+	partial := `accent = "#ff00ff"
 fg = "#123456"
 `
-	if err := os.WriteFile(filepath.Join(userDir, "dracula.toml"), []byte(overridden), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userDir, "dracula.toml"), []byte(partial), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -70,13 +71,18 @@ fg = "#123456"
 		}
 	}
 	if got.Name == "" {
-		t.Fatal("dracula theme not present after override")
+		t.Fatal("dracula theme not present after merge")
 	}
+	// User fields take effect.
 	if got.Accent != "#ff00ff" {
-		t.Errorf("Accent = %q, want #ff00ff (user override)", got.Accent)
+		t.Errorf("Accent = %q, want #ff00ff", got.Accent)
 	}
 	if got.FG != "#123456" {
-		t.Errorf("FG = %q, want #123456 (user override)", got.FG)
+		t.Errorf("FG = %q, want #123456", got.FG)
+	}
+	// Built-in dracula has bright_fg "#f8f8f2" — must survive merge.
+	if got.BrightFG != "#f8f8f2" {
+		t.Errorf("built-in BrightFG should survive merge: got %q, want #f8f8f2", got.BrightFG)
 	}
 }
 
@@ -88,7 +94,13 @@ func TestLoadAllAddsUserOnlyTheme(t *testing.T) {
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	custom := `accent = "#abcdef"`
+	// New theme (no built-in match): all six hex fields required.
+	custom := `accent = "#abcdef"
+bright_fg = "#ffffff"
+fg = "#cccccc"
+green = "#00ff00"
+yellow = "#ffff00"
+red = "#ff0000"`
 	if err := os.WriteFile(filepath.Join(userDir, "mytheme.toml"), []byte(custom), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -105,6 +117,67 @@ func TestLoadAllAddsUserOnlyTheme(t *testing.T) {
 	}
 	if !found {
 		t.Error("user theme mytheme not loaded")
+	}
+}
+
+func TestLoadAllSkipsPartialThemeWithoutBuiltinMatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	userDir := filepath.Join(home, ".config", "cliamp", "themes")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Only accent set, no built-in "broken" exists — should be rejected.
+	partial := `accent = "#ff0000"`
+	if err := os.WriteFile(filepath.Join(userDir, "broken.toml"), []byte(partial), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	themes := LoadAll()
+	for _, th := range themes {
+		if th.Name == "broken" {
+			t.Fatal("partial theme without built-in match should not be loaded")
+		}
+	}
+}
+
+func TestLoadAllSkipsInvalidHexInMerge(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	userDir := filepath.Join(home, ".config", "cliamp", "themes")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// All six fields present but red is invalid hex — valid fields merge,
+	// invalid field is ignored (built-in value survives).
+	bad := `accent = "#ff0000"
+bright_fg = "#f8f8f2"
+fg = "#6272a4"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+red = "not-a-color"`
+	if err := os.WriteFile(filepath.Join(userDir, "dracula.toml"), []byte(bad), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	themes := LoadAll()
+	var got Theme
+	for _, th := range themes {
+		if strings.EqualFold(th.Name, "dracula") {
+			got = th
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("dracula theme not found after merge")
+	}
+	if got.Accent != "#ff0000" {
+		t.Errorf("valid Accent should merge: got %q, want #ff0000", got.Accent)
+	}
+	if got.Red != "#ff5555" {
+		t.Errorf("invalid Red should be ignored (built-in): got %q, want #ff5555", got.Red)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"cmp"
 	"embed"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,6 +35,71 @@ type Theme struct {
 // IsDefault returns true if this is the sentinel default theme (no hex values).
 func (t Theme) IsDefault() bool {
 	return t.Accent == "" && t.Green == "" && t.BrightFG == ""
+}
+
+// validHex reports whether s is a valid hex color like "#fff" or "#aabbcc".
+func validHex(s string) bool {
+	if len(s) < 4 || s[0] != '#' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	n := len(s) - 1
+	return n == 3 || n == 6 || n == 8
+}
+
+// Validate checks that all six color fields are non-empty hex values.
+func (t Theme) Validate() error {
+	missing := make([]string, 0, 6)
+	if !validHex(t.Accent) {
+		missing = append(missing, "accent")
+	}
+	if !validHex(t.BrightFG) {
+		missing = append(missing, "bright_fg")
+	}
+	if !validHex(t.FG) {
+		missing = append(missing, "fg")
+	}
+	if !validHex(t.Green) {
+		missing = append(missing, "green")
+	}
+	if !validHex(t.Yellow) {
+		missing = append(missing, "yellow")
+	}
+	if !validHex(t.Red) {
+		missing = append(missing, "red")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing or invalid hex fields: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// merge applies every non-empty valid-hex field from src onto dst.
+// Fields with invalid hex values are silently ignored so that a corrupt
+// or partial user file only changes the colours it explicitly sets.
+func merge(dst *Theme, src Theme) {
+	if validHex(src.Accent) {
+		dst.Accent = src.Accent
+	}
+	if validHex(src.BrightFG) {
+		dst.BrightFG = src.BrightFG
+	}
+	if validHex(src.FG) {
+		dst.FG = src.FG
+	}
+	if validHex(src.Green) {
+		dst.Green = src.Green
+	}
+	if validHex(src.Yellow) {
+		dst.Yellow = src.Yellow
+	}
+	if validHex(src.Red) {
+		dst.Red = src.Red
+	}
 }
 
 // Default returns a sentinel "Default" theme with empty hex values,
@@ -129,6 +195,12 @@ func loadBuiltin(themes map[string]Theme) {
 }
 
 // loadUserDir loads themes from ~/.config/cliamp/themes/*.toml.
+//
+// If a user file matches a built-in theme name its fields are merged onto
+// the built-in, so that a partial override (e.g. only "accent = ...")
+// changes only that colour.  Themes without a built-in match require all
+// six hex fields to pass validation.  Invalid hex values in either mode are
+// silently ignored — the corresponding built-in (or zero) value survives.
 func loadUserDir(dir string, themes map[string]Theme) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -149,6 +221,18 @@ func loadUserDir(dir string, themes map[string]Theme) {
 		if err != nil {
 			continue
 		}
-		themes[strings.ToLower(name)] = t
+		key := strings.ToLower(name)
+		if _, exists := themes[key]; exists {
+			// Merge onto the existing (built-in) theme.
+			existing := themes[key]
+			merge(&existing, t)
+			themes[key] = existing
+		} else {
+			// New theme (no built-in match): all six fields required.
+			if err := t.Validate(); err != nil {
+				continue
+			}
+			themes[key] = t
+		}
 	}
 }
