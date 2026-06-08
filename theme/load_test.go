@@ -80,7 +80,12 @@ func TestLoadAllUserThemeScenarios(t *testing.T) {
 		{
 			name:     "full standalone theme accepted",
 			fileName: "mytheme.toml",
-			fileBody: "accent = \"#abcdef\"\nbright_fg = \"#ffffff\"\nfg = \"#cccccc\"\ngreen = \"#00ff00\"\nyellow = \"#ffff00\"\nred = \"#ff0000\"",
+			fileBody: `accent = "#abcdef"
+bright_fg = "#ffffff"
+fg = "#cccccc"
+green = "#00ff00"
+yellow = "#ffff00"
+red = "#ff0000"`,
 			check: func(t *testing.T, themes []Theme) {
 				var found bool
 				for _, th := range themes {
@@ -111,7 +116,12 @@ func TestLoadAllUserThemeScenarios(t *testing.T) {
 		{
 			name:     "invalid hex in merge ignored",
 			fileName: "dracula.toml",
-			fileBody: "accent = \"#ff0000\"\nbright_fg = \"#f8f8f2\"\nfg = \"#6272a4\"\ngreen = \"#50fa7b\"\nyellow = \"#f1fa8c\"\nred = \"not-a-color\"",
+			fileBody: `accent = "#ff0000"
+bright_fg = "#f8f8f2"
+fg = "#6272a4"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+red = "not-a-color"`,
 			check: func(t *testing.T, themes []Theme) {
 				var got Theme
 				for _, th := range themes {
